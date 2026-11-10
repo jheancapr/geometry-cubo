@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Geometry Cubo 5.0 - Mobile Edition (RobTop Specials)</title>
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="theme-color" content="#0F172A">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; -webkit-user-select: none; }
+    body, html { width: 100%; height: 100%; overflow: hidden; background: #070913; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+    #canvas-container { position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; }
+    canvas { width: 100%; height: 100%; object-fit: contain; }
+    #touch-zone { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 10; }
+    #ui-overlay { position: absolute; top: 12px; right: 12px; z-index: 20; display: flex; gap: 8px; }
+    .btn { background: #1E293B; border: 2px solid #38BDF8; color: #FFF; padding: 8px 14px; border-radius: 8px; font-weight: bold; cursor: pointer; font-size: 13px; }
+    .btn-green { border-color: #22C55E; color: #4ADE80; }
+  </style>
+</head>
+<body>
+  <div id="canvas-container">
+    <canvas id="gameCanvas" width="1280" height="720"></canvas>
+  </div>
+  <div id="touch-zone"></div>
+  <div id="ui-overlay">
+    <button class="btn btn-green" id="btn-practice">🏳️ Práctica: OFF</button>
+    <button class="btn" id="btn-cp" style="display:none;">+ Checkpoint</button>
+    <button class="btn" id="btn-fullscreen">⛶ Pantalla Completa</button>
+  </div>
+
+  <script>
+    const canvas = document.getElementById("gameCanvas");
+    const ctx = canvas.getContext("2d");
+    const touchZone = document.getElementById("touch-zone");
+    const btnPractice = document.getElementById("btn-practice");
+    const btnCP = document.getElementById("btn-cp");
+
+    const ANCHO = 1280, ALTO = 720;
+    const SUELO = 560, U = 60, LADO = 60, CUBO_X = 380, FILAS = 8;
+    const TECHO = SUELO - FILAS * U;
+    const VEL_MUNDO = 480.0, SALTO_V = 1000.0, GRAVEDAD = 3333.0;
+
+    let modo = "menu";
+    let modoPractica = false;
+    let checkpoints = [];
+    let pulsa = false;
+    let intento = 1;
+    let shake = 0;
+    let monedasRecogidas = new Set();
+
+    let p = {
+      x: 0, h: 0, vh: 0, grav: 1, modo: "cubo", vel_mult: 1.0,
+      en_suelo: true, en_rampa: false, rampa_ang: 0,
+      rot: 0, rot_obj: 0, muerto: false, completo: false
+    };
+
+    const nivel = {
+      largo: 100,
+      bloques: [[20, 0], [21, 0], [22, 0], [35, 0], [36, 1], [37, 1]],
+      picos: [[16, 0, 0], [28, 0, 0], [48, 0, 0], [68, 0, 0]],
+      rampas: [[25, 0, "sube"], [26, 1, "baja"], [52, 0, "sube"], [53, 1, "baja"]],
+      pads: [[30, 0, "amarillo"], [60, 0, "morado"]],
+      orbes: [[42, 2, "amarillo"], [75, 2, "verde"]],
+      monedas: [[32, 4], [58, 5], [82, 3]]
+    };
+
+    const estrellas = Array.from({length: 45}, () => ({
+      x: Math.random() * ANCHO, y: Math.random() * (SUELO - 40) + 20,
+      r: Math.random() * 2.5 + 1, v: Math.random() * 50 + 30
+    }));
+
+    function presionar() {
+      pulsa = true;
+      if (modo === "menu") modo = "juego";
+      else if (modo === "juego" && p.completo) reiniciar();
+    }
+    function soltar() { pulsa = false; }
+
+    window.addEventListener("keydown", (e) => {
+      if (e.code === "Space" || e.code === "ArrowUp") presionar();
+      if (e.key.toLowerCase() === "z" && modoPractica) ponerCheckpoint();
+      if (e.key.toLowerCase() === "x" && modoPractica) borrarCheckpoint();
+    });
+    window.addEventListener("keyup", (e) => {
+      if (e.code === "Space" || e.code === "ArrowUp") soltar();
+    });
+
+    touchZone.addEventListener("touchstart", (e) => { e.preventDefault(); presionar(); });
+    touchZone.addEventListener("touchend", (e) => { e.preventDefault(); soltar(); });
+
+    btnPractice.addEventListener("click", () => {
+      modoPractica = !modoPractica;
+      btnPractice.textContent = modoPractica ? "🏳️ Práctica: ON" : "🏳️ Práctica: OFF";
+      btnPractice.style.borderColor = modoPractica ? "#22C55E" : "#38BDF8";
+      btnCP.style.display = modoPractica ? "inline-block" : "none";
+      checkpoints = [];
+    });
+
+    btnCP.addEventListener("click", () => { ponerCheckpoint(); });
+
+    document.getElementById("btn-fullscreen").addEventListener("click", () => {
+      if (!document.fullscreenElement) document.documentElement.requestFullscreen();
+      else document.exitFullscreen();
+    });
+
+    function ponerCheckpoint() {
+      if (p.muerto || p.completo) return;
+      checkpoints.push({x: p.x, h: p.h, vh: p.vh, grav: p.grav, modo: p.modo, rot: p.rot});
+    }
+
+    function borrarCheckpoint() {
+      if (checkpoints.length) checkpoints.pop();
+    }
+
+    function reiniciar() {
+      p.x = 0; p.h = 0; p.vh = 0; p.grav = 1; p.modo = "cubo";
+      p.en_suelo = true; p.en_rampa = false; p.rot = 0; p.rot_obj = 0;
+      p.muerto = false; p.completo = false;
+      monedasRecogidas.clear();
+      checkpoints = [];
+    }
+
+    let tPrev = performance.now();
+    function loop(tActual) {
+      const dt = Math.min((tActual - tPrev) / 1000, 0.05);
+      tPrev = tActual;
+      actualizar(dt);
+      dibujar();
+      requestAnimationFrame(loop);
+    }
+    requestAnimationFrame(loop);
+
+    function actualizar(dt) {
+      if (shake > 0) shake = Math.max(0, shake - 30 * dt);
+
+      estrellas.forEach(e => {
+        e.x -= e.v * dt;
+        if (e.x < -10) e.x = ANCHO + 10;
+      });
+
+      if (modo !== "juego") return;
+
+      if (p.muerto) {
+        setTimeout(() => {
+          if (modoPractica && checkpoints.length > 0) {
+            const cp = checkpoints[checkpoints.length - 1];
+            p.x = cp.x; p.h = cp.h; p.vh = cp.vh; p.grav = cp.grav; p.modo = cp.modo; p.rot = cp.rot;
+            p.muerto = false;
+          } else {
+            reiniciar();
+            intento++;
+          }
+        }, 600);
+        return;
+      }
+      if (p.completo) return;
+
+      p.x += VEL_MUNDO * p.vel_mult * dt;
+
+      if (pulsa && p.en_suelo) {
+        p.vh = SALTO_V;
+        p.en_suelo = false;
+        p.en_rampa = false;
+      }
+
+      const en_aire = !p.en_suelo;
+      const previo_h = p.h;
+      p.vh -= GRAVEDAD * dt;
+      p.h += p.vh * dt;
+      let suelo = false;
+      let en_rampa = false;
+      let rampa_ang = 0;
+
+      if (p.h <= 0) { p.h = 0; p.vh = 0; suelo = true; }
+
+      // Bloques
+      nivel.bloques.forEach(([c, f]) => {
+        const b0 = f * U, b1 = b0 + U;
+        if (Math.abs(p.x - (c * U + U / 2)) < 30) {
+          if (p.h < b1 && p.h + LADO > b0) {
+            if (previo_h >= b1 - 15 && p.vh <= 0) {
+              p.h = b1; p.vh = 0; suelo = true;
+            } else if (p.x < (c + 1) * U) {
+              p.muerto = true; shake = 15;
+            }
+          }
+        }
+      });
+
+      // Rampas
+      nivel.rampas.forEach(([c, f, tipo]) => {
+        const b0 = f * U, b1 = b0 + U;
+        const dx = p.x - c * U;
+        if (dx >= 0 && dx <= U) {
+          const ySurf = (tipo === "sube") ? (b0 + dx) : (b1 - dx);
+          if (tipo === "sube" && p.h <= ySurf && p.h >= b0 - 15 && p.vh <= 120) {
+            p.h = ySurf; p.vh = 0; suelo = true; en_rampa = true; rampa_ang = 45;
+          } else if (tipo === "baja") {
+            const pegaBajada = (previo_h >= b1 - 18 || p.en_rampa) && (p.h <= ySurf + 22) && (p.vh <= 10);
+            if (pegaBajada) {
+              p.h = ySurf; p.vh = 0; suelo = true; en_rampa = true; rampa_ang = -45;
+            }
+          }
+        }
+      });
+
+      // Pads
+      nivel.pads.forEach(([c, f, t]) => {
+        if (Math.abs(p.x - (c * U + U / 2)) < 26 && Math.abs(p.h - f * U) < 18) {
+          p.vh = (t === "morado") ? 880 : 1350;
+          p.en_suelo = false; en_rampa = false;
+        }
+      });
+
+      // Orbes
+      nivel.orbes.forEach(([c, f, t]) => {
+        const ox = c * U + U / 2, oy = f * U + U / 2;
+        if (Math.abs(p.x - ox) < 40 && Math.abs(p.h + LADO / 2 - oy) < 40) {
+          if (pulsa) {
+            if (t === "verde") { p.grav = -p.grav; p.vh = 500 * p.grav; }
+            else { p.vh = (t === "morado") ? 820 : 1050; }
+            p.en_suelo = false; en_rampa = false;
+          }
+        }
+      });
+
+      // Monedas
+      nivel.monedas.forEach(([c, f]) => {
+        const ox = c * U + U / 2, oy = f * U + U / 2;
+        if (Math.abs(p.x - ox) < 32 && Math.abs(p.h + LADO / 2 - oy) < 32) {
+          monedasRecogidas.add(`${c}_${f}`);
+        }
+      });
+
+      // Picos
+      nivel.picos.forEach(([c, f]) => {
+        if (Math.abs(p.x - (c * U + 30)) < 24 && Math.abs(p.h - f * U) < 28) {
+          p.muerto = true; shake = 18;
+        }
+      });
+
+      p.en_suelo = suelo;
+      p.en_rampa = en_rampa;
+
+      if (suelo) {
+        p.rot_obj = en_rampa ? rampa_ang : Math.round(p.rot / 90) * 90;
+        p.rot += (p.rot_obj - p.rot) * Math.min(1.0, 25 * dt);
+      } else {
+        p.rot += VEL_GIRO * dt * p.grav;
+      }
+
+      if (p.x >= nivel.largo * U) p.completo = true;
+    }
+
+    function dibujar() {
+      ctx.clearRect(0, 0, ANCHO, ALTO);
+      const skX = (Math.random() - 0.5) * shake;
+      const skY = (Math.random() - 0.5) * shake;
+
+      // Fondo
+      const grad = ctx.createLinearGradient(0, 0, 0, SUELO);
+      grad.addColorStop(0, "#0F172A"); grad.addColorStop(1, "#1E3A8A");
+      ctx.fillStyle = grad;
+      ctx.fillRect(0, 0, ANCHO, SUELO);
+
+      ctx.fillStyle = "#090D1A"; ctx.fillRect(0, SUELO, ANCHO, ALTO - SUELO);
+      ctx.fillStyle = "#38BDF8"; ctx.fillRect(0, SUELO, ANCHO, 5);
+
+      // Estrellas
+      ctx.fillStyle = "#E2E8F0";
+      estrellas.forEach(e => {
+        ctx.beginPath(); ctx.arc(e.x, e.y, e.r, 0, Math.PI * 2); ctx.fill();
+      });
+
+      const desfase = CUBO_X - p.x + skX;
+
+      // Bloques
+      nivel.bloques.forEach(([c, f]) => {
+        const sx = c * U + desfase, sy = SUELO - (f + 1) * U + skY;
+        ctx.fillStyle = "#0E2A8A"; ctx.strokeStyle = "#38BDF8"; ctx.lineWidth = 3;
+        ctx.fillRect(sx, sy, U, U); ctx.strokeRect(sx, sy, U, U);
+      });
+
+      // Rampas
+      nivel.rampas.forEach(([c, f, tipo]) => {
+        const sx = c * U + desfase, sy = SUELO - (f + 1) * U + skY;
+        ctx.fillStyle = "#0E2A8A"; ctx.strokeStyle = "#00F5FF"; ctx.lineWidth = 3;
+        ctx.beginPath();
+        if (tipo === "sube") {
+          ctx.moveTo(sx, sy + U); ctx.lineTo(sx + U, sy + U); ctx.lineTo(sx + U, sy);
+        } else {
+          ctx.moveTo(sx, sy); ctx.lineTo(sx, sy + U); ctx.lineTo(sx + U, sy + U);
+        }
+        ctx.closePath(); ctx.fill(); ctx.stroke();
+      });
+
+      // Pads
+      nivel.pads.forEach(([c, f, t]) => {
+        const sx = c * U + desfase, sy = SUELO - f * U - 10 + skY;
+        ctx.fillStyle = (t === "morado") ? "#A855F7" : "#FFE600";
+        ctx.fillRect(sx + 8, sy, U - 16, 10);
+      });
+
+      // Orbes
+      nivel.orbes.forEach(([c, f, t]) => {
+        const sx = c * U + desfase + U / 2, sy = SUELO - f * U - U / 2 + skY;
+        ctx.strokeStyle = (t === "verde") ? "#22C55E" : (t === "morado" ? "#A855F7" : "#FFE600");
+        ctx.lineWidth = 3;
+        ctx.beginPath(); ctx.arc(sx, sy, 18, 0, Math.PI * 2); ctx.stroke();
+      });
+
+      // Monedas Secretas Doradas
+      const anim_m = Math.abs(Math.cos(performance.now() / 300)) * 14 + 4;
+      nivel.monedas.forEach(([c, f]) => {
+        if (!monedasRecogidas.has(`${c}_${f}`)) {
+          const sx = c * U + desfase + U / 2, sy = SUELO - f * U - U / 2 + skY;
+          ctx.fillStyle = "#FFE600"; ctx.strokeStyle = "#B45309"; ctx.lineWidth = 2;
+          ctx.beginPath(); ctx.ellipse(sx, sy, anim_m, 16, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+        }
+      });
+
+      // Checkpoints
+      checkpoints.forEach(cp => {
+        const sx = cp.x + desfase, sy = SUELO - cp.h - LADO / 2 + skY;
+        ctx.fillStyle = "#22C55E"; ctx.strokeStyle = "#FFFFFF"; ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(sx, sy - 14); ctx.lineTo(sx + 14, sy); ctx.lineTo(sx, sy + 14); ctx.lineTo(sx - 14, sy);
+        ctx.closePath(); ctx.fill(); ctx.stroke();
+      });
+
+      // Picos
+      nivel.picos.forEach(([c, f]) => {
+        const sx = c * U + desfase, sy = SUELO - (f + 1) * U + skY;
+        ctx.fillStyle = "#0A0A14"; ctx.strokeStyle = "#FFFFFF"; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.moveTo(sx + 5, sy + U); ctx.lineTo(sx + 30, sy + 5); ctx.lineTo(sx + 55, sy + U);
+        ctx.closePath(); ctx.fill(); ctx.stroke();
+      });
+
+      // Cubo
+      if (!p.muerto) {
+        ctx.save();
+        ctx.translate(CUBO_X + skX, SUELO - p.h - LADO / 2 + skY);
+        ctx.rotate((p.rot * Math.PI) / 180);
+        ctx.fillStyle = "#FFE600"; ctx.strokeStyle = "#000000"; ctx.lineWidth = 4;
+        ctx.fillRect(-LADO / 2, -LADO / 2, LADO, LADO);
+        ctx.strokeRect(-LADO / 2, -LADO / 2, LADO, LADO);
+        ctx.fillStyle = "#000";
+        ctx.fillRect(-15, -12, 10, 10); ctx.fillRect(5, -12, 10, 10);
+        ctx.fillRect(-10, 8, 20, 5);
+        ctx.restore();
+      }
+
+      // HUD
+      const pct = Math.min(100, Math.floor((p.x / (nivel.largo * U)) * 100));
+      ctx.fillStyle = "#FFFFFF"; ctx.font = "bold 20px 'Segoe UI'";
+      ctx.fillText(`PROGRESO: ${pct}%`, 30, 45);
+
+      const coin_str = "🟡".repeat(monedasRecogidas.size) + "⚪".repeat(3 - monedasRecogidas.size);
+      ctx.fillText(`🪙 ${coin_str}`, 250, 45);
+
+      if (modoPractica) {
+        ctx.fillStyle = "#22C55E";
+        ctx.fillText(`[ MODO PRÁCTICA - ${checkpoints.length} CP ]`, 420, 45);
+      }
+
+      if (modo === "menu") {
+        ctx.fillStyle = "rgba(15, 23, 42, 0.88)";
+        ctx.fillRect(340, 200, 600, 260);
+        ctx.fillStyle = "#00F5FF"; ctx.font = "bold 38px 'Segoe UI'"; ctx.textAlign = "center";
+        ctx.fillText("GEOMETRY CUBO MOBILE 5.0", 640, 280);
+        ctx.fillStyle = "#FFE600"; ctx.font = "bold 20px 'Segoe UI'";
+        ctx.fillText("¡TOCA LA PANTALLA PARA EMPEZAR!", 640, 370);
+        ctx.textAlign = "start";
+      } else if (p.completo) {
+        ctx.fillStyle = "rgba(15, 23, 42, 0.9)";
+        ctx.fillRect(340, 200, 600, 260);
+        ctx.fillStyle = "#FFE600"; ctx.font = "bold 40px 'Segoe UI'"; ctx.textAlign = "center";
+        ctx.fillText("¡NIVEL COMPLETADO!", 640, 290);
+        ctx.fillStyle = "#38BDF8"; ctx.font = "bold 22px 'Segoe UI'";
+        ctx.fillText(`100% en el Intento ${intento} | Monedas: ${monedasRecogidas.size}/3`, 640, 340);
+        ctx.fillText("Toca para reiniciar", 640, 390);
+        ctx.textAlign = "start";
+      }
+    }
+  </script>
+</body>
+</html>
