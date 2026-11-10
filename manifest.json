@@ -1,0 +1,25 @@
+{
+  "name": "Geometry Cubo",
+  "short_name": "Geometry",
+  "description": "Juego Geometry Dash estilo cubo con 20 niveles y editor",
+  "start_url": "/geometry-cubo/",
+  "scope": "/geometry-cubo/",
+  "display": "fullscreen",
+  "orientation": "landscape",
+  "background_color": "#0B0F19",
+  "theme_color": "#0F172A",
+  "icons": [
+    {
+      "src": "https://raw.githubusercontent.com/jheancapr/geometry-cubo/main/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "https://raw.githubusercontent.com/jheancapr/geometry-cubo/main/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
