@@ -1,6 +1,6 @@
 <!DOCTYPE html>
 <html lang="es">
-<head>
+<head>  <link rel="manifest" href="/geometry-cubo/manifest.json">
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>Geometry Cubo 5.0 - Mobile Edition (RobTop Specials)</title>
@@ -382,6 +382,15 @@
         ctx.fillText("Toca para reiniciar", 640, 390);
         ctx.textAlign = "start";
       }
+    }
+  </script>
+    <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('/geometry-cubo/sw.js')
+          .then(reg => console.log('Service Worker registrado OK'))
+          .catch(err => console.log('Service Worker falló:', err));
+      });
     }
   </script>
 </body>
